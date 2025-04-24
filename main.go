@@ -47,13 +47,28 @@ func redisKey(parts ...string) string {
     return fmt.Sprintf("%s%s", config.RedisPrefix, strings.Join(parts, ":"))
 }
 
-func logEvent(proto, result, srcIP string, srcPort int, dstIP string, dstPort int) {
+func logEvent(proto, result, srcIP string, srcPort int, dstIP string, dstPort int, extra map[string]interface{}) {
     if net.ParseIP(srcIP) == nil || net.ParseIP(dstIP) == nil {
-        log.Printf("[GRUMP][WARNING] Malformed IP in logEvent: src=%s, dst=%s", srcIP, dstIP)
+        log.Printf(`{"level":"warn","message":"Malformed IP","src_ip":"%s","dst_ip":"%s"}`, srcIP, dstIP)
         return
     }
-    logLine := fmt.Sprintf("[%s][%s] %s:%d -> %s:%d", proto, result, srcIP, srcPort, dstIP, dstPort)
-    log.Println(logLine)
+
+    event := map[string]interface{}{
+        "timestamp": time.Now().Format(time.RFC3339),
+        "proto":     proto,
+        "result":    result,
+        "src_ip":    srcIP,
+        "src_port":  srcPort,
+        "dst_ip":    dstIP,
+        "dst_port":  dstPort,
+    }
+
+    for k, v := range extra {
+        event[k] = v
+    }
+
+    jsonEvent, _ := json.Marshal(event)
+    fmt.Println(string(jsonEvent))
 }
 
 func flattenPortRanges() []int {
@@ -128,7 +143,7 @@ func resolveTargetIPWithCacheFlag(port int, clientIP string) (string, bool) {
         redisClient.Expire(ctx, redisScanKey, time.Duration(config.MaxScansPerIPTimeout)*time.Second)
     }
     if scanned > int64(config.MaxScansPerIP) {
-        log.Printf("[GRUMP][RATE LIMIT] %s exceeded scan threshold (%d)", clientIP, config.MaxScansPerIP)
+        logEvent("TCP", "RATE_LIMIT", clientIP, 0, "-", port, nil)
         return "", false
     }
 
@@ -201,40 +216,35 @@ func handleTCP(port int) {
             srcAddr := c.RemoteAddr().String()
             srcIP, srcPortStr, err := net.SplitHostPort(srcAddr)
             if err != nil {
-                log.Printf("[GRUMP][TCP][INVALID SRC] %s", srcAddr)
                 return
             }
             srcPort, err := strconv.Atoi(srcPortStr)
             if err != nil {
-                log.Printf("[GRUMP][TCP][INVALID PORT] %s", srcPortStr)
                 return
             }
 
-            if net.ParseIP(srcIP) == nil {
-                log.Printf("[GRUMP][TCP][MALFORMED IP] %s", srcIP)
-                return
-            }
-
-            log.Printf("[GRUMP][TCP][INCOMING] %s:%d -> %d", srcIP, srcPort, port)
             targetIP, fromCache := resolveTargetIPWithCacheFlag(port, srcIP)
             if targetIP == "" {
-                log.Printf("[GRUMP][TCP][CANCELED] %s:%d -> %d", srcIP, srcPort, port)
+                logEvent("TCP", "CANCELED", srcIP, srcPort, "-", port, nil)
                 return
             }
 
             dstConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", targetIP, port), time.Second)
             if err != nil {
-                logEvent("TCP", "TIMEOUT", srcIP, srcPort, targetIP, port)
+                logEvent("TCP", "TIMEOUT", srcIP, srcPort, targetIP, port, nil)
                 return
             }
             defer dstConn.Close()
 
-            cacheTag := "[UNCACHED]"
+            cacheStatus := "UNCACHED"
             if fromCache {
-                cacheTag = "[CACHED]"
+                cacheStatus = "CACHED"
             }
 
-            log.Printf("[GRUMP][TCP][ACCEPT]%s %s:%d -> %s:%d (%dms)", cacheTag, srcIP, srcPort, targetIP, port, time.Since(startTime).Milliseconds())
+            logEvent("TCP", "ACCEPT", srcIP, srcPort, targetIP, port, map[string]interface{}{
+                "duration_ms":  time.Since(startTime).Milliseconds(),
+                "cache_status": cacheStatus,
+            })
 
             go io.Copy(dstConn, c)
             io.Copy(c, dstConn)
@@ -257,15 +267,9 @@ func handleUDP(port int) {
             continue
         }
 
-        if clientAddr.IP.To4() == nil {
-            log.Printf("[GRUMP][UDP][MALFORMED IP] %s", clientAddr.IP.String())
-            continue
-        }
-
-        log.Printf("[GRUMP][UDP][INCOMING] %s:%d -> %d", clientAddr.IP.String(), clientAddr.Port, port)
         targetIP, _ := resolveTargetIPWithCacheFlag(port, clientAddr.IP.String())
         if targetIP == "" {
-            log.Printf("[GRUMP][UDP][CANCELED] %s:%d -> %d", clientAddr.IP.String(), clientAddr.Port, port)
+            logEvent("UDP", "CANCELED", clientAddr.IP.String(), clientAddr.Port, "-", port, nil)
             continue
         }
 
@@ -274,14 +278,13 @@ func handleUDP(port int) {
         if err != nil {
             result = "ERROR"
         }
-        log.Printf("[GRUMP][UDP][%s] %s:%d -> %s:%d", result, clientAddr.IP.String(), clientAddr.Port, targetIP, port)
+        logEvent("UDP", result, clientAddr.IP.String(), clientAddr.Port, targetIP, port, nil)
     }
 }
 
 func main() {
-    // Root check
     if os.Geteuid() == 0 {
-        log.Fatal("[GRUMP][SECURITY] This program should not be run as root. Please use a non-privileged user.")
+        log.Fatal("[GRUMP][SECURITY] This program should not be run as root.")
     }
     fmt.Println("GRUMP — Game Routing Unified Mapping Proxy")
 
@@ -300,7 +303,7 @@ func main() {
 
     _, err = redisClient.Ping(ctx).Result()
     if err != nil {
-        log.Fatalf("Failed to connect to Redis at %s:%d: %v", config.RedisHost, config.RedisPort, err)
+        log.Fatalf("Failed to connect to Redis: %v", err)
     }
 
     targetIPs, err = generateTargetIPs(config.TargetCIDR)
