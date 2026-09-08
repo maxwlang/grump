@@ -71,6 +71,17 @@ docker run -d --name grump \
   ghcr.io/maxwlang/grump:latest
 ```
 
+### Docker Compose
+
+A [`docker-compose.yml`](docker-compose.yml) is included that runs GRUMP alongside Redis and a CrowdSec agent pre-wired with the configs from `crowdsec/`:
+
+```bash
+docker compose up -d
+
+# Register grump's built-in bouncer with the agent, then set the key in config.json
+docker exec crowdsec cscli bouncers add grump
+```
+
 ---
 
 ## Systemd Integration
