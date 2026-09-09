@@ -10,6 +10,8 @@
 - Redis-based port scan caching and client rate limiting
 - CIDR-based IP filtering and disallowed host control
 - JSON-based logging for easy log ingestion and threat detection
+- CrowdSec integration: log parsing configs and an optional built-in stream bouncer
+- Docker images published to GHCR
 - Systemd-compatible for clean daemon operation
 
 ---
@@ -48,9 +50,37 @@
      "port_ranges": [{ "start": 25565, "end": 25570 }],
      "timeouts": {
        "25565": 1500
-     }
+     },
+     "crowdsec_enabled": false,
+     "crowdsec_api_url": "http://localhost:8080/",
+     "crowdsec_api_key": "<bouncer api key>",
+     "crowdsec_ticker_interval": "10s"
    }
    ```
+
+---
+
+## Docker
+
+Images are published to GHCR on every merge to `main` (`:latest`, `:sha-<short>`) and on GitHub releases (`:<version>`).
+
+```bash
+docker run -d --name grump \
+  --network host \
+  -v /opt/grump/config.json:/opt/grump/config.json:ro \
+  ghcr.io/maxwlang/grump:latest
+```
+
+### Docker Compose
+
+A [`docker-compose.yml`](docker-compose.yml) is included that runs GRUMP alongside Redis and a CrowdSec agent pre-wired with the configs from `crowdsec/`:
+
+```bash
+docker compose up -d
+
+# Register grump's built-in bouncer with the agent, then set the key in config.json
+docker exec crowdsec cscli bouncers add grump
+```
 
 ---
 
@@ -79,8 +109,45 @@ Example log entries (CrowdSec-compatible):
 
 ```json
 {"event_type":"connection","proto":"UDP","result":"RELAY","src_ip":"1.2.3.4","src_port":34567,"dst_ip":"10.0.55.2","dst_port":25565,"timestamp":"2025-04-23T17:52:31Z"}
-{"event_type":"udp_blocked","reason":"out_of_scope","src_ip":"8.8.8.8","port":25565,"timestamp":"2025-04-23T17:52:10Z"}
+{"event_type":"connection","proto":"TCP","result":"RATE_LIMIT","src_ip":"8.8.8.8","src_port":0,"dst_ip":"-","dst_port":25565,"timestamp":"2025-04-23T17:52:10Z"}
 ```
+
+---
+
+## CrowdSec Integration
+
+### Log ingestion
+
+Ready-made CrowdSec configs live in [`crowdsec/`](crowdsec/):
+
+- `acquis.yaml` — acquisition config for journald or Docker log sources
+- `parsers/s01-parse/grump-logs.yaml` — parses GRUMP's JSON logs into CrowdSec events
+- `scenarios/grump-portscan.yaml` — bans IPs that trip GRUMP's rate limiter or repeatedly probe ports
+
+Copy them into the matching directories under `/etc/crowdsec/` and reload CrowdSec.
+
+### Built-in bouncer
+
+GRUMP can also act as its own CrowdSec bouncer. When enabled, it streams ban
+decisions from the Local API and drops TCP connections / UDP packets from
+banned IPs before any forwarding occurs (logged with `"result":"BANNED"`).
+
+1. Register a bouncer API key:
+
+   ```bash
+   sudo cscli bouncers add grump
+   ```
+
+2. Set the `crowdsec_*` keys in `config.json`:
+
+   ```json
+   "crowdsec_enabled": true,
+   "crowdsec_api_url": "http://localhost:8080/",
+   "crowdsec_api_key": "<key from cscli>",
+   "crowdsec_ticker_interval": "10s"
+   ```
+
+The bouncer is disabled by default; existing configs work unchanged.
 
 ---
 
