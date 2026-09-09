@@ -21,7 +21,7 @@
 1. **Build the binary:**
 
    ```bash
-   go build -o grump main.go
+   go build -o grump ./src
    sudo mv grump /opt/grump/grump
    ```
 
