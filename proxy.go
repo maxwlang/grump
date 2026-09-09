@@ -25,10 +25,12 @@ func handleTCP(port int) {
 			srcAddr := c.RemoteAddr().String()
 			srcIP, srcPortStr, err := net.SplitHostPort(srcAddr)
 			if err != nil {
+				logJSON("warn", "Malformed source address", map[string]interface{}{"proto": "TCP", "src_addr": srcAddr, "dst_port": port})
 				return
 			}
 			srcPort, err := strconv.Atoi(srcPortStr)
 			if err != nil {
+				logJSON("warn", "Malformed source address", map[string]interface{}{"proto": "TCP", "src_addr": srcAddr, "dst_port": port})
 				return
 			}
 
@@ -37,9 +39,9 @@ func handleTCP(port int) {
 				return
 			}
 
-			targetIP, fromCache := resolveTargetIPWithCacheFlag(port, srcIP)
+			targetIP, fromCache, reason := resolveTargetIPWithCacheFlag(port, srcIP)
 			if targetIP == "" {
-				logEvent("TCP", "CANCELED", srcIP, srcPort, "-", port, nil)
+				logEvent("TCP", reason, srcIP, srcPort, "-", port, nil)
 				return
 			}
 
@@ -86,9 +88,9 @@ func handleUDP(port int) {
 			continue
 		}
 
-		targetIP, _ := resolveTargetIPWithCacheFlag(port, clientAddr.IP.String())
+		targetIP, _, reason := resolveTargetIPWithCacheFlag(port, clientAddr.IP.String())
 		if targetIP == "" {
-			logEvent("UDP", "CANCELED", clientAddr.IP.String(), clientAddr.Port, "-", port, nil)
+			logEvent("UDP", reason, clientAddr.IP.String(), clientAddr.Port, "-", port, nil)
 			continue
 		}
 

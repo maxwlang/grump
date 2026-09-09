@@ -3,7 +3,7 @@
 type: leaky
 name: grump/portscan
 description: "Detect port scanning against GRUMP"
-filter: "evt.Meta.log_type == 'grump' && evt.Meta.grump_result in ['RATE_LIMIT', 'CANCELED']"
+filter: "evt.Meta.log_type == 'grump' && evt.Meta.grump_result in ['RATE_LIMIT', 'NO_TARGET']"
 groupby: evt.Meta.source_ip
 capacity: 10
 leakspeed: 30s
