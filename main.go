@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -52,9 +51,28 @@ func redisKey(parts ...string) string {
 	return fmt.Sprintf("%s%s", config.RedisPrefix, strings.Join(parts, ":"))
 }
 
+func logJSON(level, message string, fields map[string]interface{}) {
+	entry := map[string]interface{}{
+		"event_type": "system",
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"level":      level,
+		"message":    message,
+	}
+	for k, v := range fields {
+		entry[k] = v
+	}
+	jsonEntry, _ := json.Marshal(entry)
+	fmt.Println(string(jsonEntry))
+}
+
+func logFatal(message string, fields map[string]interface{}) {
+	logJSON("fatal", message, fields)
+	os.Exit(1)
+}
+
 func logEvent(proto, result, srcIP string, srcPort int, dstIP string, dstPort int, extra map[string]interface{}) {
 	if net.ParseIP(srcIP) == nil || net.ParseIP(dstIP) == nil {
-		log.Printf(`{"level":"warn","message":"Malformed IP","src_ip":"%s","dst_ip":"%s"}`, srcIP, dstIP)
+		logJSON("warn", "Malformed IP", map[string]interface{}{"src_ip": srcIP, "dst_ip": dstIP})
 		return
 	}
 
@@ -208,7 +226,7 @@ func inc(ip net.IP) {
 func handleTCP(port int) {
 	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", config.ListenAddr, port))
 	if err != nil {
-		log.Fatalf("TCP listen error on port %d: %v", port, err)
+		logFatal("TCP listen error", map[string]interface{}{"port": port, "error": err.Error()})
 	}
 
 	for {
@@ -267,7 +285,7 @@ func handleUDP(port int) {
 	addr := net.UDPAddr{Port: port, IP: net.ParseIP(config.ListenAddr)}
 	sock, err := net.ListenUDP("udp", &addr)
 	if err != nil {
-		log.Fatalf("UDP listen error on port %d: %v", port, err)
+		logFatal("UDP listen error", map[string]interface{}{"port": port, "error": err.Error()})
 	}
 	defer sock.Close()
 
@@ -300,17 +318,17 @@ func handleUDP(port int) {
 
 func main() {
 	if os.Geteuid() == 0 {
-		log.Fatal("[GRUMP][SECURITY] This program should not be run as root.")
+		logFatal("This program should not be run as root", nil)
 	}
-	fmt.Println("GRUMP — Game Routing Unified Mapping Proxy")
+	logJSON("info", "GRUMP — Game Routing Unified Mapping Proxy", nil)
 
 	f, err := os.Open("config.json")
 	if err != nil {
-		log.Fatalf("Failed to open config.json: %v", err)
+		logFatal("Failed to open config.json", map[string]interface{}{"error": err.Error()})
 	}
 	decoder := json.NewDecoder(f)
 	if err := decoder.Decode(&config); err != nil {
-		log.Fatalf("Failed to parse config.json: %v", err)
+		logFatal("Failed to parse config.json", map[string]interface{}{"error": err.Error()})
 	}
 
 	redisClient = redis.NewClient(&redis.Options{
@@ -319,21 +337,25 @@ func main() {
 
 	_, err = redisClient.Ping(ctx).Result()
 	if err != nil {
-		log.Fatalf("Failed to connect to Redis: %v", err)
+		logFatal("Failed to connect to Redis", map[string]interface{}{"error": err.Error()})
 	}
 
 	targetIPs, err = generateTargetIPs(config.TargetCIDR)
 	if err != nil || len(targetIPs) == 0 {
-		log.Fatalf("Invalid CIDR or no usable IPs: %v", err)
+		fields := map[string]interface{}{"cidr": config.TargetCIDR}
+		if err != nil {
+			fields["error"] = err.Error()
+		}
+		logFatal("Invalid CIDR or no usable IPs", fields)
 	}
 
 	if err := initCrowdsec(); err != nil {
-		log.Fatalf("Failed to initialize CrowdSec bouncer: %v", err)
+		logFatal("Failed to initialize CrowdSec bouncer", map[string]interface{}{"error": err.Error()})
 	}
 
 	ports := flattenPortRanges()
-	fmt.Printf("[GRUMP][TCP][LISTENING] %s:%s\n", config.ListenAddr, formatPortList(ports))
-	fmt.Printf("[GRUMP][UDP][LISTENING] %s:%s\n", config.ListenAddr, formatPortList(ports))
+	logJSON("info", "Listening", map[string]interface{}{"proto": "TCP", "address": config.ListenAddr, "ports": formatPortList(ports)})
+	logJSON("info", "Listening", map[string]interface{}{"proto": "UDP", "address": config.ListenAddr, "ports": formatPortList(ports)})
 	for _, port := range ports {
 		go handleTCP(port)
 		go handleUDP(port)
@@ -342,5 +364,5 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
-	fmt.Println("\n[GRUMP] Shutting down gracefully...")
+	logJSON("info", "Shutting down gracefully", nil)
 }
