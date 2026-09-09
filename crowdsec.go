@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"net"
 	"strings"
 	"sync"
@@ -59,7 +58,7 @@ func initCrowdsec() error {
 		}
 	}()
 
-	log.Printf(`{"level":"info","message":"CrowdSec bouncer enabled","api_url":"%s"}`, config.CrowdsecAPIURL)
+	logJSON("info", "CrowdSec bouncer enabled", map[string]interface{}{"api_url": config.CrowdsecAPIURL})
 	return nil
 }
 
