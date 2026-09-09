@@ -55,6 +55,13 @@ func initCrowdsec() error {
 				bouncer.addLocked(*d.Value)
 			}
 			bouncer.mu.Unlock()
+
+			if len(decisions.New) > 0 || len(decisions.Deleted) > 0 {
+				logJSON("info", "CrowdSec decisions updated", map[string]interface{}{
+					"added":   len(decisions.New),
+					"deleted": len(decisions.Deleted),
+				})
+			}
 		}
 	}()
 

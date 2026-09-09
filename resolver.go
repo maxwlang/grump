@@ -27,7 +27,8 @@ func checkPortWithTimeout(ip net.IP, port int, timeout time.Duration) bool {
 
 // resolveTargetIPWithCacheFlag finds a backend host serving the given port,
 // preferring the Redis-cached mapping. The bool return reports a cache hit.
-func resolveTargetIPWithCacheFlag(port int, clientIP string) (string, bool) {
+// On failure the returned IP is empty and reason is "RATE_LIMIT" or "NO_TARGET".
+func resolveTargetIPWithCacheFlag(port int, clientIP string) (string, bool, string) {
 	timeout := time.Second
 	if ms, ok := config.Timeouts[fmt.Sprintf("%d", port)]; ok {
 		timeout = time.Duration(ms) * time.Millisecond
@@ -39,7 +40,7 @@ func resolveTargetIPWithCacheFlag(port int, clientIP string) (string, bool) {
 		ip := net.ParseIP(cachedIP)
 		_, cidr, _ := net.ParseCIDR(config.TargetCIDR)
 		if ip != nil && ip.To4() != nil && cidr.Contains(ip) && checkPortWithTimeout(ip, port, timeout) {
-			return cachedIP, true
+			return cachedIP, true, ""
 		}
 	}
 
@@ -49,8 +50,7 @@ func resolveTargetIPWithCacheFlag(port int, clientIP string) (string, bool) {
 		redisClient.Expire(ctx, redisScanKey, time.Duration(config.MaxScansPerIPTimeout)*time.Second)
 	}
 	if scanned > int64(config.MaxScansPerIP) {
-		logEvent("TCP", "RATE_LIMIT", clientIP, 0, "-", port, nil)
-		return "", false
+		return "", false, "RATE_LIMIT"
 	}
 
 	for _, ip := range targetIPs {
@@ -70,11 +70,11 @@ func resolveTargetIPWithCacheFlag(port int, clientIP string) (string, bool) {
 
 		if checkPortWithTimeout(ip, port, timeout) {
 			redisClient.Set(ctx, cacheKey, ip.String(), time.Duration(config.RedisTTL)*time.Second)
-			return ip.String(), false
+			return ip.String(), false, ""
 		}
 	}
 
-	return "", false
+	return "", false, "NO_TARGET"
 }
 
 // generateTargetIPs expands a CIDR into usable IPv4 host addresses,
