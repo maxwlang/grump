@@ -30,8 +30,9 @@ func logFatal(message string, fields map[string]interface{}) {
 }
 
 // logEvent emits a structured "connection" log line to stdout.
+// dstIP may be "-" when no destination was resolved (banned, rate-limited, no target).
 func logEvent(proto, result, srcIP string, srcPort int, dstIP string, dstPort int, extra map[string]interface{}) {
-	if net.ParseIP(srcIP) == nil || net.ParseIP(dstIP) == nil {
+	if net.ParseIP(srcIP) == nil || (dstIP != "-" && net.ParseIP(dstIP) == nil) {
 		logJSON("warn", "Malformed IP", map[string]interface{}{"src_ip": srcIP, "dst_ip": dstIP})
 		return
 	}
