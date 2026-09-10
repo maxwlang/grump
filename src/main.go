@@ -22,7 +22,7 @@ func main() {
 	if os.Geteuid() == 0 {
 		logFatal("This program should not be run as root", nil)
 	}
-	logJSON("info", "GRUMP — Game Routing Unified Mapping Proxy", nil)
+	logJSON("info", "GRUMP — Game Routing Unified Mapping Proxy", map[string]interface{}{"version": buildVersion()})
 
 	if err := loadConfig("config.json"); err != nil {
 		logFatal("Failed to load config.json", map[string]interface{}{"error": err.Error()})
